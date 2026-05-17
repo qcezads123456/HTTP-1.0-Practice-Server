@@ -12,10 +12,10 @@ typedef struct thread_pool_t{
     int tail,head,task_count,task_size;
     int shutdown; //1 for destroy
     int thread_size;
-    
+    pthread_cond_t all_done;
 }thread_pool_t;
 
 bool addTask(void(*func)(void *),void *inarg);
 thread_pool_t *pool_init();
-void thread_kill();
+void pool_destroy(thread_pool_t *pool);
 #endif
