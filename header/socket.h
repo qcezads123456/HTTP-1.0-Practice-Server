@@ -4,6 +4,8 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <stdio.h>
+
+struct sockaddr_in addr_init();
 bool network_init(int *fd,struct sockaddr_in *addr); // error occured return 0 and error message else return 1
 
 #endif

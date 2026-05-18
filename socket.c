@@ -2,6 +2,15 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <stdio.h>
+
+struct sockaddr_in addr_init(){
+    struct sockaddr_in addr= {0};
+    addr.sin_addr.s_addr=INADDR_ANY; //init local address (0.0.0.0)
+    addr.sin_family=AF_INET;
+    addr.sin_port=htons(8080);
+    return addr;
+}
+
 bool network_init(int *fd,struct sockaddr_in *addr){
     *fd=socket(AF_INET,SOCK_STREAM,0); //init IPV4 and TCP connection
     if(*fd==-1){
