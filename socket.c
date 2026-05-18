@@ -1,7 +1,4 @@
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <stdbool.h>
-#include <stdio.h>
+#include "socket.h"
 
 struct sockaddr_in addr_init(){
     struct sockaddr_in addr= {0};

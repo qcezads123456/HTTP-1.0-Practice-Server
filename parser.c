@@ -1,10 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdbool.h>
-#include <sys/stat.h>
 #include "parser.h"
 typedef enum{
     GET,
@@ -37,14 +30,16 @@ void method_state_init(HTTP_t *msg){
     }
 }
 int parse(int new_socket,HTTP_t *msg){
-    if(read(new_socket,msg->req_str,sizeof(msg->req_str))!=-1){
-        int ret=sscanf(msg->req_str,"%s %s %s",msg->req->method_str,msg->req->path_str,msg->req->version_str);
+    size_t byte_size=read(new_socket,msg->req_str,sizeof(msg->req_str));
+    msg->req_str[byte_size]='\0';
+    if(byte_size>0){
+        int ret=sscanf(msg->req_str,"%19s %255s %19s",msg->req->method_str,msg->req->path_str,msg->req->version_str);
         if(ret==3){
             method_state_init(msg);
         }
         else{
             perror("string split error");
-            exit(EXIT_FAILURE);
+            return -1;
         }
         if(msg->req->s_m==UNKNOWN){
             return 0; //not get response 404
@@ -101,6 +96,7 @@ void respond_to_client(void *arg){
         free(msg->req);
         free(msg);
         close(res->new_socket);
+        free(res);
     }
     else{
         if(!strcmp(msg->req->path_str,"/")){
@@ -124,6 +120,7 @@ void respond_to_client(void *arg){
             free(msg->req);
             free(msg);
             close(res->new_socket);
+            free(res);
         }
         else{
             int path_index=path_distinguish(msg);
@@ -134,6 +131,7 @@ void respond_to_client(void *arg){
                 free(msg->req);
                 free(msg);
                 close(res->new_socket);
+                free(res);
             }
             else{
                 char specific_path[512];
@@ -175,6 +173,7 @@ void respond_to_client(void *arg){
                 free(msg->req);
                 free(msg);
                 close(res->new_socket);
+                free(res);
             }
         }
     }

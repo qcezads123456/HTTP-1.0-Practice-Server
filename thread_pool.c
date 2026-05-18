@@ -1,8 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <pthread.h>
-#include <stdbool.h>
 #include "thread_pool.h"
 
 typedef enum state{
