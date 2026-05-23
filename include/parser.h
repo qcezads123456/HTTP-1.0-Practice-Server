@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <errno.h>
 typedef struct resp_use_t{
     int new_socket,sockfd;
 }resp_use_t;

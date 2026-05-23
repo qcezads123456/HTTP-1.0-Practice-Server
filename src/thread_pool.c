@@ -26,7 +26,7 @@ typedef struct thread_t
 }thread_t;
 
 
-static const int init_task_capacity=20;
+static const int init_task_capacity=2048;
 static const int init_thread_size=12;
 static thread_pool_t *global_pool = NULL;
 static calthread_t *global_calthread=NULL;
@@ -35,7 +35,13 @@ static void * worker(void* arg){
     thread_t *self=(thread_t*)arg;
     while(1){
         pthread_mutex_lock(&global_pool->lock);
-        while((global_pool->task_count==0 || self!=global_pool->t_head) && !global_pool->shutdown && self->s != TERMINATE){
+        while((global_pool->task_count==0 || self->s!=RUNNING) && !global_pool->shutdown && self->s != TERMINATE){
+            if(self->s==RUNNING){
+                global_pool->t_tail->next=self;
+                self->prev=global_pool->t_tail;
+                self->next=NULL;
+                global_pool->t_tail=self;
+            }
             self->s= IDLE;
             pthread_cond_wait(&(self->notify),&global_pool->lock);
         }
@@ -49,31 +55,20 @@ static void * worker(void* arg){
             pthread_mutex_unlock(&global_pool->lock);
             break;
         }
-        self->s=RUNNING;
-        global_pool->t_head=self->next;
-        self->next=NULL;
-        if(global_pool->t_head!=NULL){
-            global_pool->t_head->prev=NULL;
+        while(global_pool->task_count>0){
+            task_t running_task=global_pool->queue[global_pool->head];
+            global_pool->head=(global_pool->head+1)%global_pool->task_size;
+            global_pool->task_count--;
+            pthread_mutex_unlock(&global_pool->lock);
+            running_task.function(running_task.arg);
+            pthread_mutex_lock(&global_pool->lock);
         }
-        else{
-            global_pool->t_tail=NULL;
-        }
-        task_t running_task=global_pool->queue[global_pool->head];
-        global_pool->head=(global_pool->head+1)%global_pool->task_size;
-        global_pool->task_count--;
-        pthread_mutex_unlock(&global_pool->lock);
-        running_task.function(running_task.arg);
-        pthread_mutex_lock(&global_pool->lock);
-        if(global_pool->t_tail==NULL){
-            global_pool->t_tail=self;
-            global_pool->t_head=self;
-            self->prev=NULL;
-        }
-        else{
+        if(!global_pool->shutdown){
             global_pool->t_tail->next=self;
             self->prev=global_pool->t_tail;
             self->next=NULL;
             global_pool->t_tail=self;
+            self->s=IDLE;
         }
         pthread_mutex_unlock(&global_pool->lock);
     }
@@ -93,9 +88,22 @@ bool addTask(void(*func)(void *),void *inarg){
         global_pool->task_count++;
         success=1;
     }
-    if(global_pool->t_head!=NULL){
-        pthread_cond_signal(&(global_pool->t_head->notify));
-        pthread_mutex_unlock(&global_pool->lock);
+    if(success){
+        if(global_pool->dummy_head->next!=NULL){
+            thread_t *running_thread=global_pool->dummy_head->next;
+            running_thread->s=RUNNING;
+            if(running_thread->next!=NULL){
+                running_thread->next->prev=global_pool->dummy_head;
+                global_pool->dummy_head->next=running_thread->next;
+            }
+            else{
+                global_pool->dummy_head->next=NULL;
+                global_pool->t_tail=global_pool->dummy_head;
+            }
+            running_thread->next=NULL;
+            running_thread->prev=NULL;
+            pthread_cond_signal(&(running_thread->notify));
+        }
     }
     pthread_mutex_unlock(&global_pool->lock);
     return success;
@@ -106,10 +114,10 @@ static void *cal(){
     ts.tv_sec=0;
     while(1){
         nanosleep(&ts,NULL);
-        pthread_mutex_lock(&global_pool->lock);
         if(!global_pool->shutdown){
             global_calthread->rate=(float)global_pool->task_count/(float)global_pool->task_size;
             if(global_calthread->rate>=0.8){
+                pthread_mutex_lock(&global_pool->lock);
                 task_t *newqueue,*oldqueue;
                 newqueue=malloc(sizeof(task_t)*global_pool->task_size*2);
                 oldqueue=global_pool->queue;
@@ -123,23 +131,15 @@ static void *cal(){
                 free(oldqueue);
                 thread_t *newthread;
                 newthread=(thread_t*)malloc(sizeof(thread_t));
+                newthread->next = NULL;
+                newthread->prev = NULL;
+                newthread->s=IDLE;
                 pthread_cond_init(&(newthread->notify), NULL);
                 pthread_attr_t attr;
                 pthread_attr_init(&attr);
                 pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
                 pthread_create(&newthread->thread,&attr,worker,newthread);
                 pthread_attr_destroy(&attr);
-                if(global_pool->t_tail==NULL){
-                    global_pool->t_tail=newthread;
-                    global_pool->t_head=newthread;
-                    newthread->prev=NULL;
-                }
-                else{
-                    global_pool->t_tail->next=newthread;
-                    newthread->prev=global_pool->t_tail;
-                    newthread->next=NULL;
-                    global_pool->t_tail=newthread;
-                }
                 global_pool->thread_size += 1;
             }
             else if(global_calthread->rate<=0.3){
@@ -169,16 +169,18 @@ static void *cal(){
                     free(oldqueue);
                 }
                 if(global_pool->thread_size>init_thread_size){
-                    thread_t *old=global_pool->t_head;
+                    thread_t *old=global_pool->dummy_head->next;
                     if(old!=NULL){
-                        global_pool->t_head=old->next;
+                        global_pool->dummy_head->next=old->next;
                         old->next=NULL;
-                        if(global_pool->t_head!=NULL){
-                            global_pool->t_head->prev=NULL;
+                        if(global_pool->dummy_head->next!=NULL){
+                            old->next->prev=global_pool->dummy_head;
                         }
                         else{
-                            global_pool->t_tail=NULL;
+                            global_pool->t_tail=global_pool->dummy_head;
                         }
+                        old->prev=NULL;
+                        old->next=NULL;
                         old->s=TERMINATE;
                         pthread_cond_signal(&old->notify);
                         global_pool->thread_size -= 1;
@@ -188,7 +190,6 @@ static void *cal(){
             pthread_mutex_unlock(&global_pool->lock);
         }
         else{
-            global_pool->thread_size-=1;
             pthread_mutex_unlock(&global_pool->lock);
             break;
         }
@@ -198,9 +199,10 @@ static void *cal(){
 void thread_kill(){
     pthread_mutex_lock(&global_pool->lock);
     global_pool->shutdown=1;
-    while(global_pool->t_head!=NULL){
-        pthread_cond_signal(&global_pool->t_head->notify);
-        global_pool->t_head=global_pool->t_head->next;
+    thread_t *head_thread=global_pool->dummy_head->next;
+    while(head_thread!=NULL){
+        pthread_cond_signal(&head_thread->notify);
+        head_thread=head_thread->next;
     }
     pthread_mutex_unlock(&global_pool->lock);
 }
@@ -234,9 +236,11 @@ static calthread_t *calthread_init(){
 
 thread_pool_t *pool_init(){
     calthread_t *calthread;
-    thread_pool_t *pool=NULL;
+    thread_pool_t *pool=NULL; 
     pool=(thread_pool_t*)malloc(sizeof(thread_pool_t));
-    pool->t_head=NULL;
+    pool->dummy_head=(thread_t*)malloc(sizeof(thread_t));
+    pool->dummy_head->next=NULL;
+    pool->dummy_head->prev=NULL;
     pool->t_tail=NULL;
     task_t *init_queue;
     init_queue=malloc(sizeof(task_t)*init_task_capacity);
@@ -254,8 +258,9 @@ thread_pool_t *pool_init(){
     global_calthread=calthread;
     for(int i=0;i<init_thread_size;i++){
         thread_t *newnode=thread_init();
-        if(pool->t_head==NULL){
-            pool->t_head=newnode;
+        if(pool->dummy_head->next==NULL){
+            pool->dummy_head->next=newnode;
+            newnode->prev=pool->dummy_head;
             pool->t_tail=newnode;
         }
         else{
@@ -266,7 +271,20 @@ thread_pool_t *pool_init(){
     }
     return pool;
 }
-
+void traversal_list(thread_pool_t *pool){
+    int front=0;
+    thread_t *head_node=pool->dummy_head->next;
+    while(head_node!=NULL){
+        printf("%d\n",front++);
+        head_node=head_node->next;
+    }
+    int back=0;
+    thread_t *tail_node=pool->t_tail;
+    while(tail_node!=pool->dummy_head){
+        printf("%d\n",back++);
+        tail_node=tail_node->prev;
+    }
+}
 void pool_destroy(thread_pool_t *pool){
     thread_kill();
     pthread_mutex_lock(&pool->lock);

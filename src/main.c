@@ -7,9 +7,9 @@ void handle_sigint(int sig){
 }
 
 // signal bug left
-
 int main(){
-    int count=1;
+    //int count=1;
+    signal(SIGPIPE,SIG_IGN); // ignore the SIGPIPE when client close the connection or timeout
     resp_use_t *res;
     thread_pool_t *pool=pool_init();
     res=(resp_use_t*)malloc(sizeof(resp_use_t));
@@ -33,18 +33,30 @@ int main(){
         res->new_socket=accept(res->sockfd,(struct sockaddr*)&addr,&socklen);
         client_res->new_socket=res->new_socket;
         if(client_res->new_socket>=0){
-            if(addTask(respond_to_client,client_res)){
-                printf("\nNEXT %d",count++);
-            }
-            else{
+            if(client_res->new_socket==0){
                 char *res_msg=
                     "HTTP/1.0 503 Service Unvailable\r\n"
                     "Content-Type: text/plain\r\n"
                     "\r\n"
                     "Service Busy";
-                send(client_res->new_socket,res_msg,strlen(res_msg),0);
+                send(client_res->new_socket,res_msg,strlen(res_msg),MSG_NOSIGNAL);
                 close(client_res->new_socket);
                 free(client_res);
+            }
+            else{
+                if(addTask(respond_to_client,client_res)){
+                    //printf("\nNEXT %d",count++);
+                }
+                else{
+                    char *res_msg=
+                        "HTTP/1.0 503 Service Unvailable\r\n"
+                        "Content-Type: text/plain\r\n"
+                        "\r\n"
+                        "Service Busy";
+                    send(client_res->new_socket,res_msg,strlen(res_msg),MSG_NOSIGNAL);
+                    close(client_res->new_socket);
+                    free(client_res);
+                }
             }
         }
         else{
@@ -58,6 +70,7 @@ int main(){
     }
     pool->shutdown=1;
     pool_destroy(pool);
+    printf("\npool kill");
     return 0;
 }
 

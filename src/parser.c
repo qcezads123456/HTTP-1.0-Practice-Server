@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "parser.h"
 typedef enum{
     GET,
@@ -61,7 +62,7 @@ int path_distinguish(HTTP_t *msg){
         msg->req->s_p=CSS;
         return 1; // success
     }
-    return 1; // fail
+    return -1; // fail
 }
 int Whitelist_check(HTTP_t *msg){
     char list_path[]="./.www/list.txt";
@@ -92,11 +93,13 @@ void respond_to_client(void *arg){
     memset(msg->req_str,0,sizeof(msg->req_str));
     if(parse(res->new_socket,msg)<1){
         char error_meg[]="HTTP/1.0 404 Not Found\r\n\r\n";
-        send(res->new_socket,error_meg,strlen(error_meg),0);
+        send(res->new_socket,error_meg,strlen(error_meg),MSG_NOSIGNAL);
         free(msg->req);
         free(msg);
+        shutdown(res->new_socket, SHUT_RDWR);
         close(res->new_socket);
         free(res);
+        return;
     }
     else{
         if(!strcmp(msg->req->path_str,"/")){
@@ -114,30 +117,35 @@ void respond_to_client(void *arg){
             "Content-Length: %ld\r\n"
             "Connection: close\r\n\r\n"
             ,st.st_size);
-            send(res->new_socket,res_header,strlen(res_header),MSG_MORE);
-            send(res->new_socket,content,strlen(content),0);
+            ssize_t n;
+            send(res->new_socket,res_header,strlen(res_header),MSG_NOSIGNAL);
+            send(res->new_socket,content,strlen(content),MSG_NOSIGNAL);
             fclose(res_file);
             free(msg->req);
             free(msg);
+            shutdown(res->new_socket, SHUT_RDWR);
             close(res->new_socket);
             free(res);
+            return;
         }
         else{
             int path_index=path_distinguish(msg);
             int whitelist_index=Whitelist_check(msg);
             if(path_index<1 || whitelist_index<1){
                 char error_meg[]="HTTP/1.0 404 Not Found\r\n\r\n";
-                send(res->new_socket,error_meg,strlen(error_meg),0);
+                ssize_t n;
+                n=send(res->new_socket,error_meg,strlen(error_meg),MSG_NOSIGNAL);
                 free(msg->req);
                 free(msg);
+                shutdown(res->new_socket, SHUT_RDWR);
                 close(res->new_socket);
                 free(res);
+                return;
             }
             else{
                 char specific_path[512];
                 memset(specific_path,0,256);
                 snprintf(specific_path,sizeof(specific_path),"%s%s",general_dir,msg->req->path_str);
-                printf("\n\n%s",specific_path);
                 FILE *res_file=fopen(specific_path,"r");
                 stat(specific_path, &st);
                 char content[st.st_size+1];
@@ -167,16 +175,19 @@ void respond_to_client(void *arg){
                 default:
                     break;
                 }
-                send(res->new_socket,res_header,strlen(res_header),MSG_MORE);
-                send(res->new_socket,content,strlen(content),0);
+                send(res->new_socket,res_header,strlen(res_header),MSG_NOSIGNAL);
+                send(res->new_socket,content,strlen(content),MSG_NOSIGNAL);
                 fclose(res_file);
                 free(msg->req);
                 free(msg);
+                shutdown(res->new_socket, SHUT_RDWR);
                 close(res->new_socket);
                 free(res);
+                return;
             }
         }
     }
+
 }
 
 //use fopen load list.txt and fread to list[] ,
